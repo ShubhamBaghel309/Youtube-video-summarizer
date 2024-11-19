@@ -1,6 +1,7 @@
 ---
 
-# **AI YouTube Video Summarizer**  
+# **AI YouTube Video Summarizer**
+goto-(videosummarizze.streamlit.app)
 Transform any YouTube video into comprehensive notes using AI!
 
 ---
@@ -25,7 +26,6 @@ Follow these steps to get started:
 1. **Clone the repository**:
    ```bash
    git clone https://github.com/your-repo/ai-youtube-summarizer.git
-   cd ai-youtube-summarizer
    ```
 
 2. **Install required packages**:
