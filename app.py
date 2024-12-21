@@ -1,206 +1,139 @@
 import streamlit as st
-from dotenv import load_dotenv
-import os
-import google.generativeai as genai
-from youtube_transcript_api import YouTubeTranscriptApi
 import re
-import textwrap
-from datetime import datetime
-import pandas as pd
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+import groq
+import os
+from dotenv import load_dotenv
 
-# Load environment variables and configure API
+
+# Load environment variables
 load_dotenv()
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Streamlit page configuration
-st.set_page_config(
-    page_title="AI YouTube Summarizer",
-    page_icon="📺",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS
-st.markdown("""
-    <style>
-        .stAlert {margin-top: 20px;}
-        .main {padding: 20px;}
-        .stButton>button {width: 100%;}
-        .reportview-container {background: #f0f2f6}
-        .css-1v0mbdj.etr89bj1 {margin-top: 20px;}
-    </style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
-if 'history' not in st.session_state:
-    st.session_state.history = []
+# Initialize Groq client
+client = groq.Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def extract_video_id(url):
-    """Extract video ID from various YouTube URL formats"""
-    patterns = [
-        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+    """Extract YouTube video ID from URL."""
+    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
+    match = re.search(pattern, url)
+    return match.group(1) if match else None
 
-def get_video_info(video_id):
-    """Get video thumbnail and other metadata"""
-    thumbnail_url = f"http://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-    return thumbnail_url
-
-def get_transcript(video_id, language='en'):
-    """Get video transcript with language support"""
+def get_transcript(video_id):
+    """Get transcript from YouTube video."""
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[language])
-        transcript = ' '.join([d['text'] for d in transcript_list])
-        return transcript, transcript_list
-    except Exception as e:
-        st.error(f"❌ Error fetching transcript: {str(e)}")
-        return None, None
-
-def generate_summary(transcript, summary_type="detailed"):
-    """Generate summary using Google Gemini Pro with different summary types"""
-    prompts = {
-        "detailed": """Analyze the following video transcript and provide a comprehensive summary including:
-            1. Main Topic and Overview
-            2. Key Points and Important Details
-            3. Technical Concepts Explained
-            4. Practical Applications
-            5. Conclusion and Takeaways
-            
-            Make it detailed but clear and well-structured.""",
-        
-        "quick": """Provide a concise summary of the main points from this video transcript in bullet points.
-            Focus on the core message and key takeaways.""",
-        
-        "academic": """Create an academic-style summary of this video content including:
-            • Abstract
-            • Methodology (if applicable)
-            • Key Findings
-            • Discussion
-            • References to related concepts"""
-    }
-    
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompts[summary_type] + "\n\nTranscript:\n" + transcript)
-        return response.text
-    except Exception as e:
-        st.error(f"❌ Error generating summary: {str(e)}")
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([t["text"] for t in transcript_list])
+    except TranscriptsDisabled:
         return None
 
-def save_summary(video_id, summary, summary_type):
-    """Save summary to session history"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state.history.append({
-        "timestamp": timestamp,
-        "video_id": video_id,
-        "summary": summary,
-        "type": summary_type
-    })
+def generate_summary(transcript, summary_type="short"):
+    """Generate summary using Groq API."""
+    if summary_type == "short":
+        prompt = f"Please provide a concise summary (2-3 sentences) of the following transcript:\n\n{transcript}"
+    elif summary_type == "detailed":
+        prompt = f"Please provide a detailed summary (4-5 paragraphs) of the following transcript:\n\n{transcript}"
+    else:  # bullet points
+        prompt = f"Please provide a bullet-point summary of the key points from the following transcript:\n\n{transcript}"
 
-def main():
-    # Sidebar
-    with st.sidebar:
-        st.title("⚙️ Settings")
-        summary_type = st.selectbox(
-            "Summary Type",
-            ["detailed", "quick", "academic"],
-            help="Choose the style of summary you want"
-        )
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that specializes in summarizing video content."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        model="mixtral-8x7b-32768",
+        temperature=0.5,
+    )
+    
+    return chat_completion.choices[0].message.content
+
+def chat_with_bot(transcript, question):
+    """Chat with the bot about the video content."""
+    prompt = f"""Given the following video transcript:
+
+{transcript}
+
+Please answer this question: {question}"""
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that answers questions about video content based on its transcript."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        model="mixtral-8x7b-32768",
+        temperature=0.7,
+    )
+    
+    return chat_completion.choices[0].message.content
+
+# Streamlit UI
+st.set_page_config(page_title="YouTube Video Summarizer", layout="wide")
+
+st.title("🎥 YouTube Video Summarizer")
+st.write("Get summaries and chat about any YouTube video!")
+
+# Video URL input
+video_url = st.text_input("Enter YouTube Video URL:")
+
+if video_url:
+    video_id = extract_video_id(video_url)
+    
+    if video_id:
+        # Display video
+        st.video(video_url)
         
-        st.markdown("---")
-        st.markdown("### 📖 Previous Summaries")
-        if st.session_state.history:
-            for item in st.session_state.history[-5:]:  # Show last 5 summaries
-                with st.expander(f"Summary from {item['timestamp']}"):
-                    st.write(f"Type: {item['type']}")
-                    st.write(item['summary'])
-
-    # Main content
-    st.title("📺 AI YouTube Video Summarizer")
-    st.markdown("Transform any YouTube video into comprehensive notes using AI!")
-
-    # URL input
-    url = st.text_input("🔗 Enter YouTube Video URL:", placeholder="https://www.youtube.com/watch?v=...")
-
-    if url:
-        video_id = extract_video_id(url)
+        # Get transcript
+        transcript = get_transcript(video_id)
         
-        if video_id:
-            col1, col2 = st.columns([2, 1])
+        if transcript:
+            # Create tabs for different functionalities
+            tab1, tab2, tab3 = st.tabs(["📝 Summaries", "💬 Chat", "📜 Full Transcript"])
             
-            with col1:
-                st.video(f"https://www.youtube.com/watch?v={video_id}")
-            
-            with col2:
-                thumbnail_url = get_video_info(video_id)
-                st.image(thumbnail_url, use_column_width=True)
-
-            if st.button("🎯 Generate Summary", use_container_width=True):
-                with st.spinner("🎭 Fetching video transcript..."):
-                    transcript, transcript_list = get_transcript(video_id)
-                    
-                if transcript:
-                    with st.spinner("🤖 Generating AI summary..."):
-                        summary = generate_summary(transcript, summary_type)
-                        
-                    if summary:
-                        st.success("✨ Summary generated successfully!")
-                        
-                        # Display summary in a nice format
-                        st.markdown("### 📝 Summary")
+            with tab1:
+                st.subheader("Video Summaries")
+                summary_type = st.radio(
+                    "Choose summary type:",
+                    ["Short", "Detailed", "Bullet Points"],
+                    horizontal=True
+                )
+                
+                if st.button("Generate Summary"):
+                    with st.spinner("Generating summary..."):
+                        summary = generate_summary(transcript, summary_type.lower())
                         st.markdown(summary)
                         
-                        # Save to history
-                        save_summary(video_id, summary, summary_type)
-                        
-                        # Additional features
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if st.button("📥 Download Summary"):
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                filename = f"summary_{video_id}_{timestamp}.txt"
-                                with open(filename, 'w') as f:
-                                    f.write(summary)
-                                st.download_button(
-                                    label="Download Summary",
-                                    data=summary,
-                                    file_name=filename,
-                                    mime="text/plain"
-                                )
-                        
-                        with col2:
-                            if transcript_list:
-                                df = pd.DataFrame(transcript_list)
-                                st.download_button(
-                                    label="📥 Download Full Transcript",
-                                    data=df.to_csv(index=False),
-                                    file_name=f"transcript_{video_id}.csv",
-                                    mime="text/csv"
-                                )
-                        
-                        # Show full transcript in expander
-                        with st.expander("👀 View Full Transcript"):
-                            st.markdown(transcript)
+                        # Download button for summary
+                        st.download_button(
+                            "Download Summary",
+                            summary,
+                            file_name="video_summary.txt",
+                            mime="text/plain"
+                        )
+            
+            with tab2:
+                st.subheader("Chat about the Video")
+                user_question = st.text_input("Ask a question about the video:")
+                
+                if user_question:
+                    with st.spinner("Thinking..."):
+                        response = chat_with_bot(transcript, user_question)
+                        st.markdown(response)
+            
+            with tab3:
+                st.subheader("Full Transcript")
+                st.text_area("Video Transcript", transcript, height=300)
         else:
-            st.error("❌ Please enter a valid YouTube URL")
-
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-        <div style='text-align: center'>
-            <p>Made by Shubham Baghel with ❤️ using Streamlit and Google Gemini Pro</p>
-            <p>© 2024 AI YouTube Summarizer</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
+            st.error("Sorry, couldn't retrieve the transcript for this video. It might be disabled or unavailable.")
+    else:
+        st.error("Invalid YouTube URL. Please check the URL and try again.")
