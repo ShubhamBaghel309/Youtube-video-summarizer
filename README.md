@@ -46,7 +46,7 @@ An advanced YouTube video processing tool that generates summaries, enables chat
 
 1. Clone the repository:
 ```bash
-git clone [repository-url]
+git clone https://github.com/ShubhamBaghel309/Youtube-video-summarizer.git
 cd youtube-video-summarizer
 ```
 
