@@ -70,8 +70,17 @@ def get_transcript(video_id):
         # Cache the transcript
         st.session_state[cache_key] = transcript
         return transcript
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
+    except (TranscriptsDisabled, NoTranscriptFound):
         st.info("No YouTube transcript available. Converting audio to text...")
+    except Exception as e:
+        # Handle XML parsing errors and other unexpected issues
+        if "xml" in str(e).lower() or "parse" in str(e).lower():
+            st.warning("YouTube transcript data is corrupted. Converting audio to text...")
+        else:
+            st.warning(f"Error accessing YouTube transcript: {str(e)}. Converting audio to text...")
+    
+    # Fallback to audio conversion
+    try:
         transcript = convert_audio_to_text(video_id)
         if transcript:
             st.success("Successfully converted audio to text!")
@@ -81,6 +90,9 @@ def get_transcript(video_id):
         else:
             st.error("Failed to convert audio to text.")
             return None
+    except Exception as e:
+        st.error(f"Failed to process audio: {str(e)}")
+        return None
 
 def chunk_transcript(transcript, chunk_size=2000, overlap=200):
     """Split transcript into smaller chunks with overlap for better context"""
@@ -239,9 +251,8 @@ Format the response with proper markdown structure."""
             st.warning(f"Direct processing failed: {str(e)}. Falling back to chunk processing...")
     else:
         st.info(f"Transcript length ({len(transcript)} chars) exceeds direct processing limit. Using chunk processing...")
-    
-    # If we reach here, either the transcript is too long or direct processing failed
-    chunks = chunk_transcript(transcript)
+      # If we reach here, either the transcript is too long or direct processing failed
+    chunks = chunk_transcript(transcript, chunk_size=2000, overlap=200)
     
     if len(chunks) > 1:
         st.info(f"Processing video in {len(chunks)} parts...")
