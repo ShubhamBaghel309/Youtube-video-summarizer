@@ -49,3 +49,28 @@ class SummaryDatabase:
         except Exception as e:
             print(f"Error retrieving summary: {e}")
             return None
+
+    def clear_summary(self, video_id=None, summary_type=None):
+        """Clear specific or all summaries from database"""
+        try:
+            if video_id and summary_type:
+                unique_id = self.generate_id(video_id, summary_type)
+                self.collection.delete(ids=[unique_id])
+            elif video_id:
+                # Delete all summaries for this video
+                results = self.collection.get(
+                    where={"video_id": video_id},
+                    include=["metadatas"]
+                )
+                if results and results['ids']:
+                    self.collection.delete(ids=results['ids'])
+            else:
+                # Delete all summaries
+                self.collection = self.client.get_or_create_collection(
+                    name="video_summaries",
+                    embedding_function=embedding_functions.DefaultEmbeddingFunction()
+                )
+            return True
+        except Exception as e:
+            print(f"Error clearing summaries: {e}")
+            return False
